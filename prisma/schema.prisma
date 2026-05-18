@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── TENANTS ───────────────────────────────────────────────────────────────
+model Company {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  industry      String?
+  size          String?
+  country       String   @default("GB")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  users         User[]
+  assessments   Assessment[]
+  formLinks     FormLink[]
+  hqScores      HQScore[]
+  hrMetrics     HRMetric[]
+
+  @@map("companies")
+}
+
+// ─── USERS (HR admins per company) ────────────────────────────────────────
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String
+  role          UserRole  @default(HR_ADMIN)
+  companyId     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sessions      Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  HR_ADMIN
+  VIEWER
+}
+
+// ─── FORM LINKS ────────────────────────────────────────────────────────────
+model FormLink {
+  id          String       @id @default(cuid())
+  companyId   String
+  type        FormType
+  token       String       @unique @default(cuid())
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  expiresAt   DateTime?
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  responses   FormResponse[]
+
+  @@map("form_links")
+}
+
+enum FormType {
+  SELF_ASSESSMENT
+  ORG_CLIMATE
+}
+
+// ─── FORM RESPONSES (anonymous, GDPR-safe) ────────────────────────────────
+model FormResponse {
+  id           String    @id @default(cuid())
+  formLinkId   String
+  // No PII stored — responses are anonymous by design
+  // respondentToken is a random hash, never linked to identity
+  respondentToken String @unique @default(cuid())
+  responses    Json      // { questionId: answer } — flexible for any form version
+  submittedAt  DateTime  @default(now())
+  quarter      String    // e.g. "2026-Q2"
+
+  formLink     FormLink  @relation(fields: [formLinkId], references: [id], onDelete: Cascade)
+
+  @@map("form_responses")
+}
+
+// ─── HQ SCORES ────────────────────────────────────────────────────────────
+model HQScore {
+  id                     String   @id @default(cuid())
+  companyId              String
+  quarter                String   // "2026-Q1"
+  participantCount       Int      @default(0)
+
+  // Overall
+  overallScore           Float    // 0–100
+
+  // Pillar scores
+  humanityScore          Float    // Self-Love + Proximate Love + Universal Love
+  connectionScore        Float    // Colleague + Universal Connection
+  consciousnessScore     Float    // Emotional + Relational + Universal Consciousness
+
+  // Sub-dimension scores
+  selfLoveScore          Float
+  proximateLoveScore     Float
+  universalLoveScore     Float
+  colleagueConnectionScore  Float
+  universalConnectionScore  Float
+  emotionalConsciousnessScore    Float
+  relationalConsciousnessScore   Float
+  universalConsciousnessScore    Float
+
+  // Benchmarking (populated once we have enough companies)
+  sectorAvgScore         Float?
+  sectorParticipants     Int?
+
+  calculatedAt           DateTime @default(now())
+  company                Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, quarter])
+  @@map("hq_scores")
+}
+
+// ─── HR METRICS ───────────────────────────────────────────────────────────
+model HRMetric {
+  id                         String   @id @default(cuid())
+  companyId                  String
+  quarter                    String   // "2026-Q1"
+
+  // Uploaded by HR or via API
+  turnoverRate               Float?
+  involuntaryExitsPct        Float?
+  voluntaryExitsPct          Float?
+  absenteeismRate            Float?
+  burnoutLeaveDays           Int?
+  burnoutLeaveStaffPct       Float?
+  internalPromotionRate      Float?
+  enps                       Float?
+  wellbeingParticipationRate Float?
+  newHiresPct                Float?
+
+  source                     MetricSource @default(MANUAL)
+  uploadedAt                 DateTime     @default(now())
+  company                    Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, quarter])
+  @@map("hr_metrics")
+}
+
+// ─── ASSESSMENTS ──────────────────────────────────────────────────────────
+model Assessment {
+  id          String           @id @default(cuid())
+  companyId   String
+  quarter     String
+  status      AssessmentStatus @default(OPEN)
+  openedAt    DateTime         @default(now())
+  closedAt    DateTime?
+
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, quarter])
+  @@map("assessments")
+}
+
+enum AssessmentStatus {
+  OPEN
+  CLOSED
+  SCORED
+}
+
+enum MetricSource {
+  MANUAL
+  CSV_UPLOAD
+  API
+}
